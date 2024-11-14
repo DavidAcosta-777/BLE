@@ -1,0 +1,132 @@
+En esta práctica se explorará el uso de la tecnología Bluetooth Low Energy (BLE) en
+conjunto con un ESP32 para la lectura de un potenciómetro y el control de un LED. El
+objetivo principal es utilizar el ESP32 para leer los valores analógicos del potenciómetro,
+convertirlos a voltaje y visualizarlos en el monitor serial y a través de la aplicación nRF
+Connect. Adicionalmente, se implementarán funciones de control del LED mediante
+comandos seriales y comunicación BLE.
+
+Materiales Necesarios
+1. Potenciómetro (preferentemente de 10kΩ).
+2. Cableado de conexión.
+3. LED de cualquier color.
+4. Resistencia de 220Ω (opcional).
+5. ESP32 (ESP32 Dev Kit V1 o ESP32 Xiao C3).
+6. Celular con la aplicación nRF Connect instalada.
+7. Computadora con el IDE de Arduino instalado.
+8. Cable USB para cargar el código en el ESP32.
+
+Objetivo 1: Monitoreo de Voltaje a través del Monitor Serial
+Con un potenciómetro conectado a un ESP32 es onbtuvieron valores para el voltaje que se le estaba siendo suministrado. El pontenciómetro estaba conectado a un puerto analógico del ESP32, y a su vez
+el pin de salida del ESP32 estaba conectado a la computadora.
+
+Objetivo 2: Control de un LED desde el Monitor Serial
+
+Conectar el cátodo (lado corto) del LED a tierra (GND).
+Conectar el ánodo (lado largo) del LED a un pin digital del ESP32, utilizando una resistencia de 220Ω para limitar la corriente.
+
+Al ingresar el comando S o N el LED se prende o se apaga.
+
+
+Objetivo 3: Enviar datos del potenciómetro cada 0.1 segundos por Bluetooth al celular.
+Las conexiones son las mismas que para el objetivo uno, lo único que cambia es el código.
+
+
+Objetivo 4: Control del LED a través de Bluetooth BLE
+Mismas conexiones que el objetivo dos, pero ahora se debe modificar el código para que el celular reciba comandos S y N; y posteriormente envíe data al ESP32 con el fin de controlar al LED. 
+
+Objetivo 5: Monitoreo del Voltaje del Potenciómetro y Control Automático
+del LED mediante Bluetooth BLE
+Las conexiones deben de ir a pines analógicos del ESP32, tanto del LED como del potenciómetro. El código debe de ser modificado para que cuando el voltaje que reciba el celular del potenciómetro
+sea de 3.3V el LED se encienda, y si no, que permanezca apagado. A continuación se muestra el código utilizado:
+
+#include <BLEDevice.h>
+#include <BLEServer.h>
+#include <BLEUtils.h>
+#include <BLE2902.h>
+
+const int ledPin = 2;          // LED conectado al pin GPIO 2
+const int potPin = 34;         // Potenciómetro conectado al pin GPIO 34 (ADC)
+const float thresholdVoltage = 2.1; // Umbral de voltaje en volts
+bool ledState = false;
+
+// BLE UUIDs
+#define SERVICE_UUID          "4fafc201-1fb5-459e-8fcc-c5c9c331914b"
+#define VOLTAGE_CHAR_UUID     "beb5483e-36e1-4688-b7f5-ea07361b26a8"
+#define LED_STATE_CHAR_UUID   "cba1d466-344c-4be3-ab3f-189f80dd7518"
+
+BLECharacteristic *voltageCharacteristic;
+BLECharacteristic *ledStateCharacteristic;
+
+void setup() {
+    Serial.begin(115200);
+    pinMode(ledPin, OUTPUT);
+    digitalWrite(ledPin, LOW);
+
+    // Iniciar el dispositivo BLE
+    BLEDevice::init("ESP32_Pot_LED_Monitor");
+    BLEServer *pServer = BLEDevice::createServer();
+    BLEService *pService = pServer->createService(SERVICE_UUID);
+
+    // Característica de voltaje
+    voltageCharacteristic = pService->createCharacteristic(
+                                VOLTAGE_CHAR_UUID,
+                                BLECharacteristic::PROPERTY_NOTIFY
+                             );
+    voltageCharacteristic->addDescriptor(new BLE2902());
+
+    // Característica del estado del LED
+    ledStateCharacteristic = pService->createCharacteristic(
+                                LED_STATE_CHAR_UUID,
+                                BLECharacteristic::PROPERTY_NOTIFY
+                             );
+    ledStateCharacteristic->addDescriptor(new BLE2902());
+
+    pService->start();
+
+    BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
+    pAdvertising->addServiceUUID(SERVICE_UUID);
+    pAdvertising->start();
+
+    Serial.println("Esperando conexión BLE...");
+}
+
+void loop() {
+    // Leer el valor analógico del potenciómetro
+    int analogValue = analogRead(potPin);
+    float voltage = analogValue * (3.3 / 4095.0); // Convertir a voltaje (suponiendo un rango de 3.3V y resolución de 12 bits)
+
+    // Verificar si el voltaje supera el umbral
+    if (voltage > thresholdVoltage && !ledState) {
+        ledState = true;
+        digitalWrite(ledPin, HIGH);
+        notifyLedState();
+    } else if (voltage <= thresholdVoltage && ledState) {
+        ledState = false;
+        digitalWrite(ledPin, LOW);
+        notifyLedState();
+    }
+
+    // Notificar el valor del voltaje en tiempo real
+    notifyVoltage(voltage);
+
+    delay(500); // Ajuste del intervalo de actualización
+}
+
+// Función para notificar el valor de voltaje a través de BLE
+void notifyVoltage(float voltage) {
+    char voltageStr[8];
+    dtostrf(voltage, 4, 2, voltageStr); // Convertir el valor a string con 2 decimales
+    voltageCharacteristic->setValue(voltageStr);
+    voltageCharacteristic->notify();
+    Serial.print("Voltaje: ");
+    Serial.println(voltageStr);
+}
+
+// Función para notificar el estado del LED a través de BLE
+void notifyLedState() {
+    String ledStateStr = ledState ? "ON" : "OFF";
+    ledStateCharacteristic->setValue(ledStateStr.c_str());
+    ledStateCharacteristic->notify();
+    Serial.print("LED: ");
+    Serial.println(ledStateStr);
+}
